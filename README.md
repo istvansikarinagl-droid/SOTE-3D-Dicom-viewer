@@ -1,6 +1,18 @@
 # SOTE 3D Dicom viewer
 
-Rust + wgpu alapú 3D DICOM CT-néző Windowsra. Tömörítetlen vagy a `dicom-pixeldata` által dekódolható 16 bites CT-sorozatokat tölt be, és GPU-n volume renderinggel jeleníti meg.
+Rust + wgpu alapú 3D DICOM CT-néző Windowsra. A CT-sorozatot GPU-n volume renderinggel jeleníti meg.
+
+## Mit tud
+
+- DICOM CT-sorozat betöltése mappából
+- 3D volume rendering GPU-n (wgpu)
+- Csont, lágyszövet és tüdő előbeállítások
+- Egérrel forgatás, görgővel zoom
+
+## Követelmények
+
+- Rust (rustup)
+- Visual Studio Build Tools (Desktop development with C++)
 
 ## Fordítás és futtatás
 
@@ -8,7 +20,11 @@ Rust + wgpu alapú 3D DICOM CT-néző Windowsra. Tömörítetlen vagy a `dicom-p
 cargo run --release -- "D:\DICOM"
 ```
 
-A végleges önálló `.exe` a `target\release\ct_viewer.exe` útvonalon készül el a `cargo build --release` után.
+A végleges önálló `.exe` a `target\release\ct_viewer.exe` útvonalon készül el:
+
+```powershell
+cargo build --release
+```
 
 ## Kezelés
 
@@ -19,4 +35,9 @@ A végleges önálló `.exe` a `target\release\ct_viewer.exe` útvonalon készü
 
 ## Korlátok
 
-Nem orvosi eszköz, diagnózisra nem használható.
+- Nem orvosi eszköz, diagnózisra nem használható.
+- Csak 16 bites, a `dicom-pixeldata` által dekódolható DICOM-ot támogat.
+
+## Licenc
+
+MIT licenc, lásd a [LICENSE](LICENSE) fájlt.
