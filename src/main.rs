@@ -1,3 +1,10 @@
+// ============================================================
+// SOTE 3D Dicom viewer - Rust + wgpu + egui
+// - DICOM CT-sorozat betöltése mappából
+// - GPU volume rendering (wgpu)
+// - egui vezérlőpanel: csúszkák, menü, metszet síkok
+// ============================================================
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -6,14 +13,16 @@ use bytemuck::{Pod, Zeroable};
 use dicom::dictionary_std::tags;
 use dicom::object::open_file;
 use dicom::pixeldata::PixelDecoder;
+use egui_wgpu::Renderer;
+use egui_winit::State;
 use wgpu::util::DeviceExt;
 use winit::{
     event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::EventLoop,
-    keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
 
+// Egy DICOM szelet adatai
 struct Slice {
     z: f64,
     rows: u32,
@@ -23,6 +32,7 @@ struct Slice {
     hu: Vec<f32>,
 }
 
+// A teljes 3D volumen
 struct Volume {
     w: u32,
     h: u32,
@@ -44,6 +54,7 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+// Egy DICOM fájl beolvasása és HU értékek kinyerése
 fn read_slice(path: &Path) -> Option<(String, Slice)> {
     let obj = match open_file(path) {
         Ok(o) => o,
@@ -102,11 +113,7 @@ fn read_slice(path: &Path) -> Option<(String, Slice)> {
     };
     let raw = decoded.data();
     if raw.len() != (rows * cols * 2) as usize {
-        eprintln!(
-            "{}: nem 16 bites ({} bájt, ts: {ts})",
-            path.display(),
-            raw.len()
-        );
+        eprintln!("{}: nem 16 bites ({} bájt, ts: {ts})", path.display(), raw.len());
         return None;
     }
     let hu = raw
@@ -123,6 +130,7 @@ fn read_slice(path: &Path) -> Option<(String, Slice)> {
     Some((series, Slice { z: pos[2], rows, cols, sx: ps[1], sy: ps[0], hu }))
 }
 
+// A legtöbb szeletet tartalmazó sorozat betöltése
 fn load_volume(dir: &Path) -> Result<Volume, String> {
     let mut files = Vec::new();
     collect_files(dir, &mut files);
@@ -141,6 +149,8 @@ fn load_volume(dir: &Path) -> Result<Volume, String> {
     slices.retain(|s| s.rows == rows && s.cols == cols);
     let d = slices.len() as u32;
     let dz = if d > 1 { (slices[1].z - slices[0].z).abs() } else { 1.0 };
+
+    // HU -> normalizált float16: (HU + 1024) / 4096
     let mut bytes = Vec::with_capacity((rows * cols * d * 2) as usize);
     for s in &slices {
         for &hu in &s.hu {
@@ -158,12 +168,15 @@ fn load_volume(dir: &Path) -> Result<Volume, String> {
     })
 }
 
+// Uniform buffer: amit a shader minden képkockán megkap
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct Uniforms {
     rot: [[f32; 4]; 4],
     bx: [f32; 4],
     win: [f32; 4],
+    clipA: [f32; 4],
+    clipB: [f32; 4],
 }
 
 type M4 = [[f32; 4]; 4];
@@ -196,16 +209,20 @@ fn rot_matrix(yaw: f32, pitch: f32) -> M4 {
     mul(&ry, &rx)
 }
 
-const PRESETS: [(&str, f32, f32); 3] = [
+// Előbeállítások: (név, HU alsó, HU felső)
+const PRESETS: [(&str, f32, f32); 4] = [
     ("Csont", 250.0, 1200.0),
-    ("Lágyszövet", -100.0, 300.0),
+    ("Erek (kontraszt)", 100.0, 700.0),
+    ("Szervek", -50.0, 250.0),
     ("Tüdő", -900.0, -400.0),
 ];
+
 fn norm(hu: f32) -> f32 {
     (hu + 1024.0) / 4096.0
 }
 
 fn main() {
+    // DICOM mappa kiválasztása: parancssori argumentum vagy fájl párbeszéd
     let dir = std::env::args().nth(1).map(PathBuf::from).or_else(|| {
         rfd::FileDialog::new()
             .set_title("Válaszd ki a CT DICOM mappáját")
@@ -215,18 +232,16 @@ fn main() {
     let vol = match load_volume(&dir) {
         Ok(v) => v,
         Err(e) => {
-            rfd::MessageDialog::new()
-                .set_title("Hiba")
-                .set_description(&e)
-                .show();
+            rfd::MessageDialog::new().set_title("Hiba").set_description(&e).show();
             return;
         }
     };
 
+    // Ablak és GPU inicializálás
     let event_loop = EventLoop::new().unwrap();
     let window = Arc::new(
         WindowBuilder::new()
-            .with_title("CT 3D néző - egér: forgatás, görgő: zoom, 1/2/3: előbeállítás, +/-: sűrűség")
+            .with_title("SOTE 3D Dicom viewer")
             .build(&event_loop)
             .unwrap(),
     );
@@ -254,6 +269,7 @@ fn main() {
         .unwrap();
     surface.configure(&device, &config);
 
+    // 3D textúra a CT volumenyből
     let tex = device.create_texture_with_data(
         &queue,
         &wgpu::TextureDescriptor {
@@ -280,6 +296,7 @@ fn main() {
         ..Default::default()
     });
 
+    // Világ méretek normalizálása
     let ext = [
         vol.w as f64 * vol.spacing[0],
         vol.d as f64 * vol.spacing[2],
@@ -362,89 +379,221 @@ fn main() {
         multiview: None,
     });
 
+    // egui GUI inicializálás
+    let egui_ctx = egui::Context::default();
+    let mut egui_state = State::new(
+        egui_ctx.clone(),
+        egui::ViewportId::default(),
+        &window,
+        None,
+        None,
+    );
+    let mut egui_renderer = Renderer::new(&device, config.format, None, 1);
+
+    // Állapotváltozók: amit a csúszkák és menük vezérelnek
     let (mut yaw, mut pitch, mut dist) = (0.6f32, 0.3f32, 3.2f32);
-    let mut preset = 0usize;
+    let mut preset_idx = 0usize;
+    let mut win_lo = PRESETS[0].1;
+    let mut win_hi = PRESETS[0].2;
     let mut density = 1.0f32;
+    let mut contrast_mode = false;
+    let mut clip_x = (false, 0.5f32);
+    let mut clip_y = (false, 0.5f32);
+    let mut clip_z = (false, 0.5f32);
     let mut dragging = false;
     let mut last = (0.0f64, 0.0f64);
 
     event_loop
         .run(move |event, elwt| match event {
             Event::AboutToWait => window.request_redraw(),
-            Event::WindowEvent { event, .. } => match event {
-                WindowEvent::CloseRequested => elwt.exit(),
-                WindowEvent::Resized(s) => {
-                    config.width = s.width.max(1);
-                    config.height = s.height.max(1);
-                    surface.configure(&device, &config);
+            Event::WindowEvent { event, .. } => {
+                // egui input kezelése (csúszkák, menü kattintások)
+                let response = egui_state.on_window_event(&window, &event);
+                if response.repaint {
+                    window.request_redraw();
                 }
-                WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
-                    dragging = state == ElementState::Pressed;
-                }
-                WindowEvent::CursorMoved { position, .. } => {
-                    if dragging {
-                        yaw -= (position.x - last.0) as f32 * 0.01;
-                        pitch = (pitch + (position.y - last.1) as f32 * 0.01).clamp(-1.5, 1.5);
-                    }
-                    last = (position.x, position.y);
-                }
-                WindowEvent::MouseWheel { delta, .. } => {
-                    let y = match delta {
-                        MouseScrollDelta::LineDelta(_, y) => y,
-                        MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.02,
-                    };
-                    dist = (dist * (1.0 - y * 0.08)).clamp(1.2, 10.0);
-                }
-                WindowEvent::KeyboardInput { event: k, .. } if k.state == ElementState::Pressed => {
-                    if let PhysicalKey::Code(c) = k.physical_key {
-                        match c {
-                            KeyCode::Digit1 => preset = 0,
-                            KeyCode::Digit2 => preset = 1,
-                            KeyCode::Digit3 => preset = 2,
-                            KeyCode::Equal | KeyCode::NumpadAdd => density = (density * 1.2).min(20.0),
-                            KeyCode::Minus | KeyCode::NumpadSubtract => density = (density / 1.2).max(0.05),
-                            _ => {}
-                        }
-                    }
-                }
-                WindowEvent::RedrawRequested => {
-                    let (_, lo, hi) = (PRESETS[preset].0, PRESETS[preset].1, PRESETS[preset].2);
-                    let u = Uniforms {
-                        rot: rot_matrix(yaw, pitch),
-                        bx: [hb[0], hb[1], hb[2], dist],
-                        win: [norm(lo), norm(hi), density, config.width as f32 / config.height as f32],
-                    };
-                    queue.write_buffer(&ubuf, 0, bytemuck::bytes_of(&u));
-                    let Ok(frame) = surface.get_current_texture() else {
+
+                match event {
+                    WindowEvent::CloseRequested => elwt.exit(),
+                    WindowEvent::Resized(s) => {
+                        config.width = s.width.max(1);
+                        config.height = s.height.max(1);
                         surface.configure(&device, &config);
-                        return;
-                    };
-                    let fv = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-                    let mut enc = device.create_command_encoder(&Default::default());
-                    {
-                        let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: None,
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: &fv,
-                                resolve_target: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                    store: wgpu::StoreOp::Store,
-                                },
-                            })],
-                            depth_stencil_attachment: None,
-                            timestamp_writes: None,
-                            occlusion_query_set: None,
-                        });
-                        pass.set_pipeline(&pipeline);
-                        pass.set_bind_group(0, &bind, &[]);
-                        pass.draw(0..3, 0..1);
                     }
-                    queue.submit(Some(enc.finish()));
-                    frame.present();
+                    // Egér forgatás: csak ha NEM egui panelen vagyunk
+                    WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
+                        dragging = state == ElementState::Pressed && !egui_ctx.wants_pointer_input();
+                    }
+                    WindowEvent::CursorMoved { position, .. } => {
+                        if dragging {
+                            yaw -= (position.x - last.0) as f32 * 0.01;
+                            pitch = (pitch + (position.y - last.1) as f32 * 0.01).clamp(-1.5, 1.5);
+                        }
+                        last = (position.x, position.y);
+                    }
+                    WindowEvent::MouseWheel { delta, .. } => {
+                        let y = match delta {
+                            MouseScrollDelta::LineDelta(_, y) => y,
+                            MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.02,
+                        };
+                        dist = (dist * (1.0 - y * 0.08)).clamp(1.2, 10.0);
+                    }
+                    WindowEvent::RedrawRequested => {
+                        // egui UI felépítése
+                        let raw_input = egui_state.take_egui_input(&window);
+                        let full_output = egui_ctx.run(raw_input, |ctx| {
+                            // Menüsor felül
+                            egui::TopBottomPanel::top("menu").show(ctx, |ui| {
+                                ui.menu_button("Nézet", |ui| {
+                                    for (i, (name, lo, hi)) in PRESETS.iter().enumerate() {
+                                        if ui.button(*name).clicked() {
+                                            preset_idx = i;
+                                            win_lo = *lo;
+                                            win_hi = *hi;
+                                            ui.close_menu();
+                                        }
+                                    }
+                                    ui.separator();
+                                    ui.checkbox(&mut contrast_mode, "Kontrasztanyagos CT");
+                                });
+                            });
+
+                            // Jobb oldali vezérlőpanel
+                            egui::SidePanel::right("panel").show(ctx, |ui| {
+                                ui.heading("Megjelenítés");
+                                ui.separator();
+
+                                ui.label("Szövet típus");
+                                egui::ComboBox::from_label("")
+                                    .selected_text(PRESETS[preset_idx].0)
+                                    .show_ui(ui, |ui| {
+                                        for (i, (name, lo, hi)) in PRESETS.iter().enumerate() {
+                                            if ui.selectable_label(preset_idx == i, *name).clicked() {
+                                                preset_idx = i;
+                                                win_lo = *lo;
+                                                win_hi = *hi;
+                                            }
+                                        }
+                                    });
+
+                                ui.separator();
+                                ui.label("HU ablak");
+                                ui.add(egui::Slider::new(&mut win_lo, -1024.0..=2000.0).text("Alsó HU"));
+                                ui.add(egui::Slider::new(&mut win_hi, -1024.0..=3000.0).text("Felső HU"));
+                                if win_lo > win_hi { win_lo = win_hi; }
+
+                                ui.separator();
+                                ui.label("Sűrűség (átlátszóság)");
+                                ui.add(egui::Slider::new(&mut density, 0.1..=10.0).logarithmic(true));
+
+                                ui.separator();
+                                ui.heading("Metszet síkok");
+                                ui.checkbox(&mut clip_x.0, "X sík (bal-jobb)");
+                                if clip_x.0 {
+                                    ui.add(egui::Slider::new(&mut clip_x.1, 0.0..=1.0).text("X pozíció"));
+                                }
+                                ui.checkbox(&mut clip_y.0, "Y sík (elöl-hátul)");
+                                if clip_y.0 {
+                                    ui.add(egui::Slider::new(&mut clip_y.1, 0.0..=1.0).text("Y pozíció"));
+                                }
+                                ui.checkbox(&mut clip_z.0, "Z sík (fej-láb)");
+                                if clip_z.0 {
+                                    ui.add(egui::Slider::new(&mut clip_z.1, 0.0..=1.0).text("Z pozíció"));
+                                }
+                            });
+                        });
+
+                        // Platform output kezelése (vágólap stb.)
+                        egui_state.handle_platform_output(&window, full_output.platform_output);
+
+                        // Uniform frissítése a UI értékekből
+                        let (lo, hi) = if contrast_mode {
+                            (win_lo - 200.0, win_hi + 400.0)
+                        } else {
+                            (win_lo, win_hi)
+                        };
+                        let u = Uniforms {
+                            rot: rot_matrix(yaw, pitch),
+                            bx: [hb[0], hb[1], hb[2], dist],
+                            win: [norm(lo), norm(hi), density, config.width as f32 / config.height as f32],
+                            clipA: [clip_x.0 as u32 as f32, clip_x.1, clip_y.0 as u32 as f32, clip_y.1],
+                            clipB: [clip_z.0 as u32 as f32, clip_z.1, 0.0, 0.0],
+                        };
+                        queue.write_buffer(&ubuf, 0, bytemuck::bytes_of(&u));
+
+                        // Renderelés: először volumen, majd egui
+                        let Ok(frame) = surface.get_current_texture() else {
+                            surface.configure(&device, &config);
+                            return;
+                        };
+                        let fv = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                        let mut enc = device.create_command_encoder(&Default::default());
+
+                        // 1. lépés: volume rendering
+                        {
+                            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                label: None,
+                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                    view: &fv,
+                                    resolve_target: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                        store: wgpu::StoreOp::Store,
+                                    },
+                                })],
+                                depth_stencil_attachment: None,
+                                timestamp_writes: None,
+                                occlusion_query_set: None,
+                            });
+                            pass.set_pipeline(&pipeline);
+                            pass.set_bind_group(0, &bind, &[]);
+                            pass.draw(0..3, 0..1);
+                        }
+
+                        // 2. lépés: egui UI rárajzolása
+                        let screen = egui_wgpu::ScreenDescriptor {
+                            size_in_pixels: [config.width, config.height],
+                            pixels_per_point: window.scale_factor() as f32,
+                        };
+
+                        // UI alakzatokból primitívek készítése
+                        let tris = egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
+
+                        // Új egui textúrák feltöltése (pl. betűtípus)
+                        for (id, image_delta) in &full_output.textures_delta.set {
+                            egui_renderer.update_texture(&device, &queue, *id, &image_delta);
+                        }
+
+                        egui_renderer.update_buffers(&device, &queue, &mut enc, &tris, &screen);
+                        {
+                            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                label: Some("egui"),
+                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                    view: &fv,
+                                    resolve_target: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Load,
+                                        store: wgpu::StoreOp::Store,
+                                    },
+                                })],
+                                depth_stencil_attachment: None,
+                                timestamp_writes: None,
+                                occlusion_query_set: None,
+                            });
+                            egui_renderer.render(&mut pass, &tris, &screen);
+                        }
+
+                        // Már nem használt egui textúrák felszabadítása
+                        for id in &full_output.textures_delta.free {
+                            egui_renderer.free_texture(id);
+                        }
+
+                        queue.submit(Some(enc.finish()));
+                        frame.present();
+                    }
+                    _ => {}
                 }
-                _ => {}
-            },
+            }
             _ => {}
         })
         .unwrap();

@@ -1,12 +1,15 @@
 # SOTE 3D Dicom viewer
 
-Rust + wgpu alapú 3D DICOM CT-néző Windowsra. A CT-sorozatot GPU-n volume renderinggel jeleníti meg.
+Rust + wgpu + egui alapú 3D DICOM CT-néző Windowsra. A CT-sorozatot GPU-n volume renderinggel jeleníti meg, csúszkákkal és menüsorral vezérelhető.
 
 ## Mit tud
 
 - DICOM CT-sorozat betöltése mappából
 - 3D volume rendering GPU-n (wgpu)
-- Csont, lágyszövet és tüdő előbeállítások
+- Csont, erek (kontraszt), szervek és tüdő előbeállítások
+- Sima vs. kontrasztanyagos CT váltó
+- HU ablak és sűrűség csúszkák
+- Három tengely menti metszet sík (X, Y, Z) kapcsolóval és pozíció csúszkával
 - Egérrel forgatás, görgővel zoom
 
 ## Követelmények
@@ -28,15 +31,16 @@ cargo build --release
 
 ## Kezelés
 
-- Bal egérgomb: forgatás
+- Bal egérgomb: forgatás (csak ha nem egui panelen vagy)
 - Görgő: zoom
-- `1` / `2` / `3`: csont, lágyszövet, tüdő előbeállítás
-- `+` / `-`: sűrűség (átlátszóság)
+- Menüsor: Nézet menüben előbeállítások és kontraszt váltó
+- Jobb panel: HU ablak, sűrűség és metszet sík csúszkák
 
 ## Korlátok
 
 - Nem orvosi eszköz, diagnózisra nem használható.
 - Csak 16 bites, a `dicom-pixeldata` által dekódolható DICOM-ot támogat.
+- A kontrasztanyagos mód manuális váltó, nem automatikus felismerés.
 
 ## Licenc
 

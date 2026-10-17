@@ -1,6 +1,6 @@
 [package]
 name = "ct_viewer"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -12,6 +12,11 @@ dicom = "0.7"
 dicom-pixeldata = "0.7"
 half = "2"
 rfd = "0.14"
+
+# GUI: csúszkák, menüsor, jelölőnégyzetek
+egui = "0.27.2"
+egui-wgpu = { version = "0.27.2", features = ["winit"] }
+egui-winit = "0.27.2"
 
 [profile.release]
 opt-level = 3
