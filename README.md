@@ -10,6 +10,7 @@ Rust + wgpu + egui alapú 3D DICOM CT-néző Windowsra. A CT-sorozatot GPU-n vol
 - Sima vs. kontrasztanyagos CT váltó
 - HU ablak és sűrűség csúszkák
 - Három tengely menti metszet sík (X, Y, Z) kapcsolóval és pozíció csúszkával
+- 2D MPR nézet: 2x2 elrendezés (axiális, szagittális, koronális), panelenkénti zoom és pan
 - Egérrel forgatás, görgővel zoom
 
 ## Követelmények
@@ -31,9 +32,9 @@ cargo build --release
 
 ## Kezelés
 
-- Bal egérgomb: forgatás (csak ha nem egui panelen vagy)
-- Görgő: zoom
-- Menüsor: Nézet menüben előbeállítások és kontraszt váltó
+- Bal egérgomb: forgatás (3D) vagy panelek mozgatása (MPR)
+- Görgő: zoom (3D) vagy panel zoom (MPR)
+- Menüsor: Nézet menüben előbeállítások, kontraszt váltó, MPR nézet
 - Jobb panel: HU ablak, sűrűség és metszet sík csúszkák
 
 ## Korlátok
