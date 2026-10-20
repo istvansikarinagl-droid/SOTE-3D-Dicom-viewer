@@ -1,8 +1,9 @@
 // ============================================================
-// SOTE 3D Dicom viewer - Rust + wgpu + egui
+// 3D Dicom viewer - Rust + wgpu + egui
 // - DICOM CT-sorozat betöltése mappából
 // - GPU volume rendering (wgpu)
 // - 2D MPR nézet: 2x2 elrendezés, panelenkénti zoom és pan
+// - MIP (Maximum Intensity Projection) mód
 // ============================================================
 
 use std::collections::HashMap;
@@ -175,9 +176,9 @@ struct Uniforms {
     rot: [[f32; 4]; 4],
     bx: [f32; 4],
     win: [f32; 4],
-    clipA: [f32; 4],
-    clipB: [f32; 4],
-    clipC: [f32; 4],
+    clip_a: [f32; 4],
+    clip_b: [f32; 4],
+    clip_c: [f32; 4],
 }
 
 // Uniform buffer a 2D MPR shadernek
@@ -247,7 +248,7 @@ fn main() {
     let event_loop = EventLoop::new().unwrap();
     let window = Arc::new(
         WindowBuilder::new()
-            .with_title("SOTE 3D Dicom viewer")
+            .with_title("3D Dicom viewer")
             .build(&event_loop)
             .unwrap(),
     );
@@ -321,7 +322,6 @@ fn main() {
         mapped_at_creation: false,
     });
 
-    // 2D MPR uniform bufferek
     let u2bufs: Vec<wgpu::Buffer> = (0..3)
         .map(|_| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -450,6 +450,7 @@ fn main() {
     let mut win_hi = PRESETS[0].2;
     let mut density = 1.0f32;
     let mut contrast_mode = false;
+    let mut mip_mode = false;
     let mut mpr_mode = false;
     let mut clip_x = (false, 0.5f32);
     let mut clip_y = (false, 0.5f32);
@@ -458,7 +459,6 @@ fn main() {
     let mut flip_y = false;
     let mut flip_z = false;
 
-    // MPR panelenkénti zoom és pan
     let mut mpr_zoom = [1.0f32; 3];
     let mut mpr_pan = [[0.0f32; 2]; 3];
     let mut mpr_drag_panel: Option<usize> = None;
@@ -485,7 +485,6 @@ fn main() {
                     WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
                         let pressed = state == ElementState::Pressed;
                         if mpr_mode && pressed {
-                            // Melyik MPR panelen kattintottunk? (2x2 rács)
                             let pw = (config.width / 2) as f64;
                             let ph = (config.height / 2) as f64;
                             let (cx, cy) = last;
@@ -494,7 +493,7 @@ fn main() {
                             } else if cx < pw {
                                 Some(2)
                             } else {
-                                None // jobb alsó üres
+                                None
                             };
                             mpr_drag_panel = if egui_ctx.wants_pointer_input() { None } else { panel };
                             dragging = false;
@@ -505,7 +504,6 @@ fn main() {
                     }
                     WindowEvent::CursorMoved { position, .. } => {
                         if let Some(pi) = mpr_drag_panel {
-                            // Pan: az egér mozgásával arányosan, zoommal osztva
                             let pw = (config.width / 2) as f32;
                             let ph = (config.height / 2) as f32;
                             let dx = (position.x - last.0) as f32 / (pw * mpr_zoom[pi]);
@@ -524,7 +522,6 @@ fn main() {
                             MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.02,
                         };
                         if mpr_mode {
-                            // Az aktív MPR panel zoomolása az egér pozíciója alapján
                             let pw = (config.width / 2) as f64;
                             let ph = (config.height / 2) as f64;
                             let (cx, cy) = last;
@@ -557,6 +554,7 @@ fn main() {
                                     }
                                     ui.separator();
                                     ui.checkbox(&mut contrast_mode, "Kontrasztanyagos CT");
+                                    ui.checkbox(&mut mip_mode, "MIP mód");
                                     ui.checkbox(&mut mpr_mode, "2D MPR nézet");
                                 });
                             });
@@ -580,6 +578,7 @@ fn main() {
 
                                 ui.separator();
                                 ui.checkbox(&mut mpr_mode, "2D MPR nézet");
+                                ui.checkbox(&mut mip_mode, "MIP mód");
 
                                 ui.separator();
                                 ui.label("HU ablak");
@@ -587,7 +586,7 @@ fn main() {
                                 ui.add(egui::Slider::new(&mut win_hi, -1024.0..=3000.0).text("Felső HU"));
                                 if win_lo > win_hi { win_lo = win_hi; }
 
-                                if !mpr_mode {
+                                if !mpr_mode && !mip_mode {
                                     ui.separator();
                                     ui.label("Sűrűség (átlátszóság)");
                                     ui.add(egui::Slider::new(&mut density, 0.1..=10.0).logarithmic(true));
@@ -638,13 +637,12 @@ fn main() {
                             rot: rot_matrix(yaw, pitch),
                             bx: [hb[0], hb[1], hb[2], dist],
                             win: [norm(lo), norm(hi), density, config.width as f32 / config.height as f32],
-                            clipA: [clip_x.0 as u32 as f32, clip_x.1, flip_x as u32 as f32, clip_y.0 as u32 as f32],
-                            clipB: [clip_y.1, flip_y as u32 as f32, clip_z.0 as u32 as f32, clip_z.1],
-                            clipC: [flip_z as u32 as f32, 0.0, 0.0, 0.0],
+                            clip_a: [clip_x.0 as u32 as f32, clip_x.1, flip_x as u32 as f32, clip_y.0 as u32 as f32],
+                            clip_b: [clip_y.1, flip_y as u32 as f32, clip_z.0 as u32 as f32, clip_z.1],
+                            clip_c: [flip_z as u32 as f32, mip_mode as u32 as f32, 0.0, 0.0],
                         };
                         queue.write_buffer(&ubuf, 0, bytemuck::bytes_of(&u));
 
-                        // MPR uniformok: szelet pozíció + zoom/pan
                         let u2 = [
                             Uniforms2D { p: [0.0, clip_z.1, norm(lo), norm(hi)], v: [mpr_zoom[0], mpr_pan[0][0], mpr_pan[0][1], 0.0] },
                             Uniforms2D { p: [1.0, clip_x.1, norm(lo), norm(hi)], v: [mpr_zoom[1], mpr_pan[1][0], mpr_pan[1][1], 0.0] },
@@ -662,8 +660,6 @@ fn main() {
                         let mut enc = device.create_command_encoder(&Default::default());
 
                         if mpr_mode {
-                            // 2x2 MPR: bal felül axiális, jobb felül szagittális,
-                            // bal alul koronális, jobb alul üres
                             {
                                 let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                                     label: Some("mpr"),

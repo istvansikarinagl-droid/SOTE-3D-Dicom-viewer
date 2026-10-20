@@ -1,4 +1,4 @@
-# SOTE 3D Dicom viewer
+# 3D Dicom viewer
 
 Rust + wgpu + egui alapú 3D DICOM CT-néző Windowsra. A CT-sorozatot GPU-n volume renderinggel jeleníti meg, csúszkákkal és menüsorral vezérelhető.
 
@@ -10,6 +10,7 @@ Rust + wgpu + egui alapú 3D DICOM CT-néző Windowsra. A CT-sorozatot GPU-n vol
 - Sima vs. kontrasztanyagos CT váltó
 - HU ablak és sűrűség csúszkák
 - Három tengely menti metszet sík (X, Y, Z) kapcsolóval és pozíció csúszkával
+- MIP (Maximum Intensity Projection) mód
 - 2D MPR nézet: 2x2 elrendezés (axiális, szagittális, koronális), panelenkénti zoom és pan
 - Egérrel forgatás, görgővel zoom
 
@@ -34,7 +35,7 @@ cargo build --release
 
 - Bal egérgomb: forgatás (3D) vagy panelek mozgatása (MPR)
 - Görgő: zoom (3D) vagy panel zoom (MPR)
-- Menüsor: Nézet menüben előbeállítások, kontraszt váltó, MPR nézet
+- Menüsor: Nézet menüben előbeállítások, kontraszt váltó, MIP mód, MPR nézet
 - Jobb panel: HU ablak, sűrűség és metszet sík csúszkák
 
 ## Korlátok
