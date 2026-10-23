@@ -1,49 +1,45 @@
 # 3D Dicom viewer
 
-Rust + wgpu + egui alapú 3D DICOM CT-néző Windowsra. A CT-sorozatot GPU-n volume renderinggel jeleníti meg, csúszkákkal és menüsorral vezérelhető.
+Rust + wgpu + egui alapú 3D DICOM CT-néző Windowsra.
 
-## Mit tud
+## Funkciók
 
-- DICOM CT-sorozat betöltése mappából
-- 3D volume rendering GPU-n (wgpu)
-- Csont, erek (kontraszt), szervek és tüdő előbeállítások
-- Sima vs. kontrasztanyagos CT váltó
-- HU ablak és sűrűség csúszkák
-- Három tengely menti metszet sík (X, Y, Z) kapcsolóval és pozíció csúszkával
+- DICOM CT-sorozat betöltése mappából, GPU volume rendering
+- Window/Level (szélesség + közép) vezérlés, radiológiai előbeállítások
+- Kontrasztanyagos CT mód
+- Három tengely menti metszet sík (X, Y, Z)
 - MIP (Maximum Intensity Projection) mód
-- 2D MPR nézet: 2x2 elrendezés (axiális, szagittális, koronális), panelenkénti zoom és pan
-- Egérrel forgatás, görgővel zoom
+- Izofelület (csont felszín) mód, HU-küszöb csúszkával
+- 2D MPR nézet: axiális, szagittális, koronális, panelenkénti zoom és pan
+- Távolságmérés jobb egérgombbal, több mérés egyszerre, mm-ben
+- Képernyőkép mentés mentési dialógussal (F12 vagy gomb)
 
-## Követelmények
+## Kezelés (2D MPR mód)
 
-- Rust (rustup)
-- Visual Studio Build Tools (Desktop development with C++)
+- Bal egérgomb: kép mozgatása
+- Görgő: zoom
+- Jobb egérgomb: mérőpont lerakása (két klikk = egy mérés)
+- A mérővonalak a képpel együtt mozognak zoomoláskor és mozgatáskor is
+- A mérések színei: sárga, cián, világoszöld, fehér (ciklikusan)
 
-## Fordítás és futtatás
+## Képernyőkép
+
+- F12 vagy a „Képernyőkép mentése” gomb
+- Mentési dialógus, alapértelmezett név: DICOM_screenshot_YYYYMMDD_HHMMSS.png
+- A jelenet UI nélkül kerül mentésre PNG formátumban
+
+## Fordítás
 
 ```powershell
 cargo run --release -- "D:\DICOM"
-```
-
-A végleges önálló `.exe` a `target\release\ct_viewer.exe` útvonalon készül el:
-
-```powershell
 cargo build --release
 ```
-
-## Kezelés
-
-- Bal egérgomb: forgatás (3D) vagy panelek mozgatása (MPR)
-- Görgő: zoom (3D) vagy panel zoom (MPR)
-- Menüsor: Nézet menüben előbeállítások, kontraszt váltó, MIP mód, MPR nézet
-- Jobb panel: HU ablak, sűrűség és metszet sík csúszkák
 
 ## Korlátok
 
 - Nem orvosi eszköz, diagnózisra nem használható.
-- Csak 16 bites, a `dicom-pixeldata` által dekódolható DICOM-ot támogat.
-- A kontrasztanyagos mód manuális váltó, nem automatikus felismerés.
+- Csak 16 bites, a dicom-pixeldata által dekódolható DICOM-ot támogat.
 
 ## Licenc
 
-MIT licenc, lásd a [LICENSE](LICENSE) fájlt.
+MIT

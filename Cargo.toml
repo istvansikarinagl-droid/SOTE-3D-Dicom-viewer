@@ -1,25 +1,23 @@
 [package]
 name = "ct_viewer"
-version = "0.4.0"
+version = "0.9.0"
 edition = "2021"
 
 [dependencies]
-wgpu = "0.19"
-winit = "0.29"
-pollster = "0.3"
-bytemuck = { version = "1", features = ["derive"] }
-dicom = "0.7"
-dicom-pixeldata = "0.7"
-half = "2"
-rfd = "0.14"
-
-# GUI: csúszkák, menüsor, jelölőnégyzetek
-egui = "0.27.2"
-egui-wgpu = { version = "0.27.2", features = ["winit"] }
-egui-winit = "0.27.2"
+winit = "0.30"
+wgpu = "24"
+pollster = "0.4"
+bytemuck = { version = "1.21", features = ["derive"] }
+egui = "0.31"
+egui-wgpu = "0.31"
+egui-winit = "0.31"
+dicom = "0.8"
+dicom-pixeldata = "0.8"
+half = "2.5"
+rfd = "0.15"
+image = "0.25"
+chrono = "0.4"
 
 [profile.release]
 opt-level = 3
 lto = true
-codegen-units = 1
-strip = true
