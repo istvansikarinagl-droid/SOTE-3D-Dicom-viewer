@@ -1,0 +1,11 @@
+/target/
+*.log
+*.pdb
+*.dcm
+*.dicom
+/DICOM/
+/dicom/
+/screenshots/
+DICOM_screenshot_*.png
+.vs/
+.idea/
